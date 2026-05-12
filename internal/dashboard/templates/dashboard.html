@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>bestproxy</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:ui-monospace,monospace;font-size:13px;background:#0f1117;color:#e2e8f0;padding:20px}
+h1{font-size:18px;font-weight:700;color:#f8fafc;margin-bottom:4px}
+.header{display:flex;align-items:baseline;gap:12px;margin-bottom:24px}
+.updated{font-size:11px;color:#64748b}
+.set{margin-bottom:24px}
+.set-name{font-size:13px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #1e293b}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;padding:6px 10px;font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid #1e293b}
+td{padding:7px 10px;border-bottom:1px solid #0d1117;color:#cbd5e1}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#131820}
+.addr{color:#e2e8f0;font-weight:500}
+.num{text-align:right;color:#94a3b8}
+th.num{text-align:right}
+.lat{text-align:right}
+th.lat{text-align:right}
+.status{text-align:center;width:50px}
+th.status{text-align:center}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%}
+.dot-up{background:#22c55e;box-shadow:0 0 6px #22c55e80}
+.dot-down{background:#ef4444;box-shadow:0 0 6px #ef444480}
+.lat-val{font-variant-numeric:tabular-nums}
+.lat-val.fast{color:#22c55e}
+.lat-val.med{color:#eab308}
+.lat-val.slow{color:#ef4444}
+.lat-val.none{color:#475569}
+.pool-group{border-left:1px solid #1e293b}
+.pool-cell{text-align:right;font-variant-numeric:tabular-nums;color:#64748b}
+.pool-cell.active{color:#38bdf8}
+.pool-cell.idle{color:#4ade80}
+th.pool-head{text-align:center;border-left:1px solid #1e293b}
+.sep{width:1px;background:#1e293b;padding:0}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>bestproxy</h1>
+  <span class="updated" id="updated">connecting...</span>
+</div>
+<div id="content">
+{{range .Sets}}
+<div class="set" id="set-{{.Name}}">
+  <div class="set-name">{{.Name}}</div>
+  <table>
+    <thead><tr>
+      <th>Proxy</th>
+      <th class="num">Requests</th>
+      <th class="num">Errors</th>
+      <th class="lat">1 min</th>
+      <th class="lat">5 min</th>
+      <th class="lat">1 hour</th>
+      <th class="pool-head" colspan="4">Connection pool</th>
+      <th class="status">Status</th>
+    </tr>
+    <tr>
+      <th colspan="6"></th>
+      <th class="num pool-group">Active</th>
+      <th class="num">Idle</th>
+      <th class="num">Total</th>
+      <th class="num">Created</th>
+      <th class="status"></th>
+    </tr></thead>
+    <tbody id="tbody-{{.Name}}">
+    {{range .Proxies}}
+    <tr id="row-{{.SafeID}}">
+      <td class="addr">{{.Addr}}</td>
+      <td class="num">{{.TotalRequests}}</td>
+      <td class="num">{{.ErrorCount}}</td>
+      <td class="lat"><span class="lat-val {{.Avg1mClass}}">{{.Avg1mStr}}</span></td>
+      <td class="lat"><span class="lat-val {{.Avg5mClass}}">{{.Avg5mStr}}</span></td>
+      <td class="lat"><span class="lat-val {{.Avg1hClass}}">{{.Avg1hStr}}</span></td>
+      <td class="pool-cell active pool-group">{{.PoolInFlight}}</td>
+      <td class="pool-cell idle">{{.PoolIdle}}</td>
+      <td class="pool-cell">{{.PoolSize}}</td>
+      <td class="pool-cell">{{.PoolCreated}}</td>
+      <td class="status"><span class="dot {{.StatusClass}}" title="{{.StatusText}}"></span></td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+</div>
+<script>
+const es = new EventSource('/dashboard/events');
+es.onmessage = function(e) {
+  const data = JSON.parse(e.data);
+  document.getElementById('updated').textContent = 'updated: ' + new Date(data.generated_at).toLocaleTimeString();
+  data.sets.forEach(function(set) {
+    const tbody = document.getElementById('tbody-' + set.name);
+    if (!tbody) return;
+    set.proxies.forEach(function(p) {
+      const row = document.getElementById('row-' + p.safe_id);
+      if (!row) return;
+      const c = row.cells;
+      c[1].textContent = p.total_requests;
+      c[2].textContent = p.error_count;
+      c[3].innerHTML = '<span class="lat-val ' + p.avg_1m_class + '">' + p.avg_1m_str + '</span>';
+      c[4].innerHTML = '<span class="lat-val ' + p.avg_5m_class + '">' + p.avg_5m_str + '</span>';
+      c[5].innerHTML = '<span class="lat-val ' + p.avg_1h_class + '">' + p.avg_1h_str + '</span>';
+      c[6].textContent = p.pool_in_flight;
+      c[7].textContent = p.pool_idle;
+      c[8].textContent = p.pool_size;
+      c[9].textContent = p.pool_created;
+      c[10].innerHTML = '<span class="dot ' + p.status_class + '" title="' + p.status_text + '"></span>';
+    });
+  });
+};
+es.onerror = function() {
+  document.getElementById('updated').textContent = 'disconnected — reconnecting...';
+};
+</script>
+</body>
+</html>

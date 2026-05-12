@@ -1,0 +1,29 @@
+server:
+  addr: ":8888"
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 90s
+
+health:
+  interval: 10s
+  timeout: 5s
+  failure_threshold: 3
+  recovery_threshold: 2
+
+sets:
+  - name: openrouter
+    pool:
+      min: 20   # connections pre-warmed at startup per upstream
+      max: 100  # max idle connections kept alive per upstream
+    proxies:
+      - host: openrouter-fi-01.msndr.net
+      - host: openrouter-fi-02.msndr.net
+      - host: openrouter-de-03.msndr.net
+
+  - name: anthropic
+    pool:
+      min: 10
+      max: 50
+    proxies:
+      - host: anthropic-us-01.msndr.net
+        port: 443

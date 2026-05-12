@@ -1,0 +1,8 @@
+services:
+  bestproxy:
+    build: .
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./config.yaml:/config.yaml:ro
+    restart: unless-stopped
