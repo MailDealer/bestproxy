@@ -1,6 +1,7 @@
 services:
   bestproxy:
     build: .
+    image: bestproxy
     ports:
       - "8888:8888"
     volumes:
