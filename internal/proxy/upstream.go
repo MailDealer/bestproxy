@@ -1,19 +1,22 @@
 package proxy
 
 import (
+	"bufio"
 	"context"
+	"crypto/tls"
+	"encoding/base64"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/elkin/bestproxy/internal/config"
 	"github.com/elkin/bestproxy/internal/stats"
+	"golang.org/x/net/http2"
 )
 
 type Status uint32
@@ -23,25 +26,28 @@ const (
 	StatusDown Status = iota
 )
 
+// UpstreamProxy represents ONE forward proxy (CONNECT) VPS for a set. Requests are
+// tunneled through it to the set's real origin with end-to-end TLS — the proxy only
+// pipes bytes, so there is a single TLS handshake (bestproxy↔origin) that we reuse.
 type UpstreamProxy struct {
-	Addr    string
+	Addr    string // forward proxy host:port (for dashboard/health)
 	SetName string
 	Stats   *stats.ProxyStats
 
 	status     atomic.Uint32
-	rp         *httputil.ReverseProxy
-	target     *url.URL
+	origin     *url.URL // real upstream, e.g. https://openrouter.ai
+	forwardURL *url.URL // forward proxy URL with scheme + basic-auth userinfo
+	rt         *trackingTransport
 	warmClient *http.Client
 }
 
-func NewUpstream(setName, addr string, pool config.PoolConfig) *UpstreamProxy {
-	target := &url.URL{Scheme: "https", Host: addr}
-
+func NewUpstream(setName string, forwardURL, origin *url.URL, pool config.PoolConfig, tlsInsecure bool) *UpstreamProxy {
 	u := &UpstreamProxy{
-		Addr:    addr,
-		SetName: setName,
-		Stats:   stats.New(),
-		target:  target,
+		Addr:       forwardURL.Host,
+		SetName:    setName,
+		Stats:      stats.New(),
+		origin:     origin,
+		forwardURL: forwardURL,
 	}
 
 	ps := u.Stats.Pool
@@ -51,7 +57,12 @@ func NewUpstream(setName, addr string, pool config.PoolConfig) *UpstreamProxy {
 	}
 
 	transport := &http.Transport{
-		// Wrap DialContext to track connection creation and closure.
+		// Proxy returns the forward proxy → Go opens CONNECT and does TLS to the
+		// real origin INSIDE the tunnel (end-to-end). Userinfo in the URL becomes
+		// Proxy-Authorization on the CONNECT.
+		Proxy: http.ProxyURL(forwardURL),
+		// DialContext here dials the PROXY (not the origin), so trackedConn counts
+		// tunnel TCP connections — exactly the pooled-keepalive metric we want.
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			conn, err := dialer.DialContext(ctx, network, addr)
 			if err != nil {
@@ -60,50 +71,46 @@ func NewUpstream(setName, addr string, pool config.PoolConfig) *UpstreamProxy {
 			ps.ConnCreated()
 			return &trackedConn{Conn: conn, pool: ps}, nil
 		},
+		// Shared for TLS-to-proxy (https proxy) and TLS-to-origin (inside tunnel);
+		// Go sets ServerName per hop, so the origin cert is verified against the real
+		// host — the end-to-end security guarantee. insecure_skip_verify is e2e-only.
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: tlsInsecure}, //nolint:gosec
 		MaxIdleConns:          0,
 		MaxIdleConnsPerHost:   pool.Max,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
-		ForceAttemptHTTP2:     true,
 	}
 
-	u.warmClient = &http.Client{Transport: transport, Timeout: 10 * time.Second}
-
-	// trackingTransport wraps transport to count in-flight requests.
-	rt := &trackingTransport{Transport: transport, pool: ps}
-
-	setPrefix := "/" + setName
-
-	u.rp = &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			req.URL.Scheme = "https"
-			req.URL.Host = addr
-			if strings.HasPrefix(req.URL.Path, setPrefix) {
-				req.URL.Path = req.URL.Path[len(setPrefix):]
-				if req.URL.Path == "" {
-					req.URL.Path = "/"
-				}
-			}
-			if strings.HasPrefix(req.URL.RawPath, setPrefix) {
-				req.URL.RawPath = req.URL.RawPath[len(setPrefix):]
-			}
-			req.Host = addr
-			req.Header.Del("X-Forwarded-For")
-		},
-		Transport: rt,
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			u.Stats.RecordError()
-			http.Error(w, fmt.Sprintf("upstream error: %v", err), http.StatusBadGateway)
-		},
-		ModifyResponse: func(resp *http.Response) error {
-			u.Stats.RecordSuccess(resp.ContentLength)
-			return nil
-		},
+	// HTTP/2 keepalive PINGs: detect dead tunneled h2 conns to Cloudflare and evict
+	// them, so the next RoundTrip errors before sending the (non-idempotent, non-
+	// retryable-by-Go) POST body — our failover loop then retries on another upstream.
+	if h2t, err := http2.ConfigureTransports(transport); err == nil && h2t != nil {
+		h2t.ReadIdleTimeout = 15 * time.Second
+		h2t.PingTimeout = 5 * time.Second
 	}
+
+	u.rt = &trackingTransport{Transport: transport, pool: ps}
+	u.warmClient = &http.Client{Transport: transport, Timeout: 15 * time.Second}
 
 	return u
 }
+
+// RoundTrip executes one request through this upstream's warm, in-flight-tracked transport.
+func (u *UpstreamProxy) RoundTrip(req *http.Request) (*http.Response, error) {
+	return u.rt.RoundTrip(req)
+}
+
+// Origin is the real upstream URL this forward proxy tunnels to.
+func (u *UpstreamProxy) Origin() *url.URL { return u.origin }
+
+// EWMA exposes the selection metric (probe latency EWMA).
+func (u *UpstreamProxy) EWMA() float64 { return u.Stats.EWMA() }
+
+// Record* delegate to Stats so *UpstreamProxy satisfies the upstream interface.
+func (u *UpstreamProxy) RecordRequest()        { u.Stats.RecordRequest() }
+func (u *UpstreamProxy) RecordSuccess(n int64) { u.Stats.RecordSuccess(n) }
+func (u *UpstreamProxy) RecordError()          { u.Stats.RecordError() }
 
 // trackingTransport counts in-flight requests around the real transport.
 type trackingTransport struct {
@@ -121,8 +128,8 @@ func (t *trackingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 // trackedConn wraps net.Conn to decrement pool count on close.
 type trackedConn struct {
 	net.Conn
-	pool  *stats.PoolStats
-	once  sync.Once
+	pool *stats.PoolStats
+	once sync.Once
 }
 
 func (c *trackedConn) Close() error {
@@ -134,30 +141,112 @@ func (u *UpstreamProxy) Status() Status {
 	return Status(u.status.Load())
 }
 
-func (u *UpstreamProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	u.Stats.RecordRequest()
-	u.rp.ServeHTTP(w, r)
-}
-
-// WarmUp pre-fills the transport's idle pool with n parallel HEAD requests.
-// Errors are ignored — the goal is only to establish TLS sessions.
+// WarmUp pre-fills the idle pool with n parallel HEAD requests to the origin THROUGH
+// the tunnel, establishing reusable end-to-end TLS sessions. Errors/4xx are ignored —
+// the goal is only the pooled TLS session (body must be drained for reuse).
 func (u *UpstreamProxy) WarmUp(ctx context.Context, n int) {
 	var wg sync.WaitGroup
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			req, err := http.NewRequestWithContext(ctx, http.MethodHead, "https://"+u.Addr+"/", nil)
+			req, err := http.NewRequestWithContext(ctx, http.MethodHead, u.origin.String()+"/", nil)
 			if err != nil {
 				return
 			}
 			resp, err := u.warmClient.Do(req)
 			if err == nil {
+				io.Copy(io.Discard, resp.Body) //nolint:errcheck
 				resp.Body.Close()
 			}
 		}()
 	}
 	wg.Wait()
+}
+
+// Probe checks whether this forward proxy is usable and records latency into EWMA.
+//   - mode "tcp":     plain TCP dial to the proxy (cheapest, validates only the socket).
+//   - mode "connect": full tunnel setup (dial → TLS-to-proxy → CONNECT origin → 200),
+//     validating reachability + proxy TLS + basic auth + tunnel, latency = setup time.
+//     Stops at CONNECT — never issues a request to the real origin (no API traffic/WAF).
+func (u *UpstreamProxy) Probe(ctx context.Context, mode string) (time.Duration, error) {
+	if mode == "tcp" {
+		start := time.Now()
+		conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", u.Addr)
+		latency := time.Since(start)
+		if err != nil {
+			return 0, err
+		}
+		conn.Close()
+		return latency, nil
+	}
+	return u.connectProbe(ctx)
+}
+
+func (u *UpstreamProxy) connectProbe(ctx context.Context) (time.Duration, error) {
+	start := time.Now()
+
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", u.forwardURL.Host)
+	if err != nil {
+		return 0, fmt.Errorf("dial proxy: %w", err)
+	}
+	defer conn.Close()
+	if dl, ok := ctx.Deadline(); ok {
+		conn.SetDeadline(dl) //nolint:errcheck
+	}
+
+	// TLS to the forward proxy itself (when it is an https forward proxy).
+	if u.forwardURL.Scheme == "https" {
+		host := u.forwardURL.Hostname()
+		tlsConn := tls.Client(conn, &tls.Config{
+			ServerName:         host,
+			MinVersion:         tls.VersionTLS12,
+			InsecureSkipVerify: u.warmTLSInsecure(),
+		})
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			return 0, fmt.Errorf("tls to proxy: %w", err)
+		}
+		conn = tlsConn
+	}
+
+	// CONNECT origin:port through the proxy.
+	target := net.JoinHostPort(u.origin.Hostname(), originPort(u.origin))
+	var authLine string
+	if ui := u.forwardURL.User; ui != nil {
+		pass, _ := ui.Password()
+		token := base64.StdEncoding.EncodeToString([]byte(ui.Username() + ":" + pass))
+		authLine = "Proxy-Authorization: Basic " + token + "\r\n"
+	}
+	reqLine := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n%s\r\n", target, target, authLine)
+	if _, err := io.WriteString(conn, reqLine); err != nil {
+		return 0, fmt.Errorf("write CONNECT: %w", err)
+	}
+
+	resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		return 0, fmt.Errorf("read CONNECT response: %w", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("CONNECT failed: %s", resp.Status)
+	}
+	return time.Since(start), nil
+}
+
+// warmTLSInsecure mirrors the transport's InsecureSkipVerify so the probe trusts the
+// same certs as real traffic (both share the e2e-test escape hatch).
+func (u *UpstreamProxy) warmTLSInsecure() bool {
+	if t, ok := u.warmClient.Transport.(*http.Transport); ok && t.TLSClientConfig != nil {
+		return t.TLSClientConfig.InsecureSkipVerify
+	}
+	return false
+}
+
+func originPort(o *url.URL) string {
+	if p := o.Port(); p != "" {
+		return p
+	}
+	return "443"
 }
 
 func (u *UpstreamProxy) UpdateStatus(failThreshold, recoverThreshold int) {

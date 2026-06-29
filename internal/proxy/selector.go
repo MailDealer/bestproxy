@@ -1,13 +1,34 @@
 package proxy
 
-import "math/rand/v2"
+import (
+	"math/rand/v2"
+	"net/http"
+	"net/url"
+)
+
+// upstream is the behavior Pool and the selector need. *UpstreamProxy implements it;
+// tests inject fakes. Kept small so failover logic is unit-testable without real sockets.
+type upstream interface {
+	Status() Status
+	EWMA() float64
+	RoundTrip(*http.Request) (*http.Response, error)
+	Origin() *url.URL
+	RecordRequest()
+	RecordSuccess(int64)
+	RecordError()
+}
 
 // Pick selects the best upstream using Power-of-Two-Choices with EWMA latency.
 // Returns nil if all upstreams are down.
-func Pick(upstreams []*UpstreamProxy) *UpstreamProxy {
-	candidates := make([]*UpstreamProxy, 0, len(upstreams))
+func Pick(upstreams []upstream) upstream {
+	return PickExcluding(upstreams, nil)
+}
+
+// PickExcluding is Pick but skips already-tried upstreams (for per-request failover).
+func PickExcluding(upstreams []upstream, exclude map[upstream]bool) upstream {
+	candidates := make([]upstream, 0, len(upstreams))
 	for _, u := range upstreams {
-		if u.Status() == StatusUp {
+		if u.Status() == StatusUp && !exclude[u] {
 			candidates = append(candidates, u)
 		}
 	}
@@ -27,7 +48,7 @@ func Pick(upstreams []*UpstreamProxy) *UpstreamProxy {
 	}
 	a, b := candidates[i], candidates[j]
 
-	if a.Stats.EWMA() <= b.Stats.EWMA() {
+	if a.EWMA() <= b.EWMA() {
 		return a
 	}
 	return b

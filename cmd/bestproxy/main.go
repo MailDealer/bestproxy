@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -34,15 +35,26 @@ func main() {
 	pools := make([]*proxy.Pool, 0, len(cfg.Sets))
 
 	for _, setConf := range cfg.Sets {
+		origin, err := url.Parse(setConf.Origin) // validated in config.Load
+		if err != nil {
+			logger.Error("parse origin", "set", setConf.Name, "origin", setConf.Origin, "err", err)
+			os.Exit(1)
+		}
 		upstreams := make([]*proxy.UpstreamProxy, 0, len(setConf.Proxies))
 		for _, pc := range setConf.Proxies {
-			u := proxy.NewUpstream(setConf.Name, pc.Addr(), setConf.Pool)
+			fwdURL, err := pc.ProxyURL() // validated in config.Load
+			if err != nil {
+				logger.Error("parse proxy", "set", setConf.Name, "host", pc.Host, "err", err)
+				os.Exit(1)
+			}
+			u := proxy.NewUpstream(setConf.Name, fwdURL, origin, setConf.Pool, cfg.TLS.InsecureSkipVerify)
 			upstreams = append(upstreams, u)
 			allUpstreams = append(allUpstreams, u)
-			logger.Info("registered upstream", "set", setConf.Name, "addr", pc.Addr(),
-				"pool_min", setConf.Pool.Min, "pool_max", setConf.Pool.Max)
+			// fwdURL.Host only — never log userinfo (password).
+			logger.Info("registered upstream", "set", setConf.Name, "proxy", fwdURL.Host,
+				"origin", origin.String(), "pool_min", setConf.Pool.Min, "pool_max", setConf.Pool.Max)
 		}
-		pools = append(pools, proxy.NewPool(setConf.Name, upstreams))
+		pools = append(pools, proxy.NewPool(setConf.Name, upstreams, cfg.Failover.MaxAttempts, cfg.Failover.MaxBufferBytes))
 	}
 
 	// Start health checker.

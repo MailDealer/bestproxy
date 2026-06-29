@@ -1,0 +1,10 @@
+{
+	auto_https disable_redirects
+}
+
+# Stand-in for the real upstream (e.g. openrouter.ai). Self-signed cert via Caddy's
+# internal CA; bestproxy connects with insecure_skip_verify in the e2e config.
+origin:443 {
+	tls internal
+	respond "e2e-origin-ok" 200
+}

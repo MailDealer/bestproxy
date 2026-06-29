@@ -1,0 +1,39 @@
+# Local end-to-end harness for bestproxy forward/CONNECT mode + failover.
+#
+#   docker compose -f e2e/docker-compose.e2e.yml up --build
+#
+# Happy path:
+#   curl -s http://localhost:8888/openrouter/anything   →  "e2e-origin-ok"
+# Failover (per-request, before health reacts):
+#   docker compose -f e2e/docker-compose.e2e.yml stop fwd1
+#   curl -s http://localhost:8888/openrouter/anything   →  still "e2e-origin-ok" (via fwd2)
+# Health/circuit-breaker:
+#   curl -s http://localhost:8888/dashboard/json | jq   →  fwd1 shows down after threshold
+services:
+  origin:
+    image: caddy:2
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+
+  fwd1:
+    image: vimagick/tinyproxy
+    volumes:
+      - ./tinyproxy.conf:/etc/tinyproxy/tinyproxy.conf:ro
+
+  fwd2:
+    image: vimagick/tinyproxy
+    volumes:
+      - ./tinyproxy.conf:/etc/tinyproxy/tinyproxy.conf:ro
+
+  bestproxy:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./config.e2e.yaml:/config.yaml:ro
+    depends_on:
+      - origin
+      - fwd1
+      - fwd2

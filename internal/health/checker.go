@@ -2,7 +2,6 @@ package health
 
 import (
 	"context"
-	"net"
 	"time"
 
 	"github.com/elkin/bestproxy/internal/config"
@@ -46,14 +45,10 @@ func (c *Checker) check(ctx context.Context, u *proxy.UpstreamProxy) {
 	checkCtx, cancel := context.WithTimeout(ctx, c.cfg.Timeout)
 	defer cancel()
 
-	start := time.Now()
-	conn, err := (&net.Dialer{}).DialContext(checkCtx, "tcp", u.Addr)
-	latency := time.Since(start)
-
+	latency, err := u.Probe(checkCtx, c.cfg.Mode)
 	if err != nil {
 		u.Stats.RecordHealthFailure()
 	} else {
-		conn.Close()
 		u.Stats.RecordHealthSuccess(latency)
 	}
 
