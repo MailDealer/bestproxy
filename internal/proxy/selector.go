@@ -3,11 +3,22 @@ package proxy
 import "math/rand/v2"
 
 // Pick selects the best upstream using Power-of-Two-Choices with EWMA latency.
-// Returns nil if all upstreams are down.
+// Primary upstreams are always preferred; backup upstreams are used only when
+// no primary upstream is up. Returns nil if all upstreams (primary and backup)
+// are down.
 func Pick(upstreams []*UpstreamProxy) *UpstreamProxy {
+	if u := pickTier(upstreams, false); u != nil {
+		return u
+	}
+	return pickTier(upstreams, true)
+}
+
+// pickTier runs P2C+EWMA selection over the healthy upstreams of a single tier
+// (primary when backup is false, reserve when backup is true).
+func pickTier(upstreams []*UpstreamProxy, backup bool) *UpstreamProxy {
 	candidates := make([]*UpstreamProxy, 0, len(upstreams))
 	for _, u := range upstreams {
-		if u.Status() == StatusUp {
+		if u.Backup == backup && u.Status() == StatusUp {
 			candidates = append(candidates, u)
 		}
 	}

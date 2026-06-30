@@ -18,6 +18,7 @@ td{padding:7px 10px;border-bottom:1px solid #0d1117;color:#cbd5e1}
 tr:last-child td{border-bottom:none}
 tr:hover td{background:#131820}
 .addr{color:#e2e8f0;font-weight:500}
+.badge{display:inline-block;margin-left:8px;padding:1px 6px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#fbbf24;background:#78350f33;border:1px solid #92400e;border-radius:4px;vertical-align:middle}
 .num{text-align:right;color:#94a3b8}
 th.num{text-align:right}
 .lat{text-align:right}
@@ -71,7 +72,7 @@ th.pool-head{text-align:center;border-left:1px solid #1e293b}
     <tbody id="tbody-{{.Name}}">
     {{range .Proxies}}
     <tr id="row-{{.SafeID}}">
-      <td class="addr">{{.Addr}}</td>
+      <td class="addr">{{.Addr}}{{if .Backup}}<span class="badge">backup</span>{{end}}</td>
       <td class="num">{{.TotalRequests}}</td>
       <td class="num">{{.ErrorCount}}</td>
       <td class="lat"><span class="lat-val {{.Avg1mClass}}">{{.Avg1mStr}}</span></td>

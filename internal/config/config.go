@@ -37,6 +37,8 @@ type SetConfig struct {
 	Name    string        `yaml:"name"`
 	Pool    PoolConfig    `yaml:"pool"`
 	Proxies []ProxyConfig `yaml:"proxies"`
+	// Backup proxies are used only when every proxy in Proxies is down.
+	Backup []ProxyConfig `yaml:"backup"`
 }
 
 type ProxyConfig struct {
@@ -126,6 +128,11 @@ func validate(cfg *Config) error {
 		for _, p := range s.Proxies {
 			if p.Host == "" {
 				return fmt.Errorf("set %q has proxy with empty host", s.Name)
+			}
+		}
+		for _, p := range s.Backup {
+			if p.Host == "" {
+				return fmt.Errorf("set %q has backup proxy with empty host", s.Name)
 			}
 		}
 	}

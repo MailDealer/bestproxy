@@ -92,6 +92,7 @@ type templateSet struct {
 type templateProxy struct {
 	Addr          string
 	SafeID        string
+	Backup        bool
 	TotalRequests int64
 	ErrorCount    int64
 	Avg1mStr      string
@@ -115,14 +116,14 @@ func (h *Handler) buildTemplateData() templateData {
 		ts := templateSet{Name: p.Name}
 		for _, u := range p.Upstreams {
 			snap := u.Stats.Snapshot()
-			ts.Proxies = append(ts.Proxies, makeTemplateProxy(u.Addr, snap))
+			ts.Proxies = append(ts.Proxies, makeTemplateProxy(u.Addr, u.Backup, snap))
 		}
 		d.Sets = append(d.Sets, ts)
 	}
 	return d
 }
 
-func makeTemplateProxy(addr string, snap stats.Snapshot) templateProxy {
+func makeTemplateProxy(addr string, backup bool, snap stats.Snapshot) templateProxy {
 	statusClass := "dot-up"
 	statusText := "up"
 	if !snap.LastCheckOK && snap.LastCheckAt != 0 {
@@ -133,6 +134,7 @@ func makeTemplateProxy(addr string, snap stats.Snapshot) templateProxy {
 	return templateProxy{
 		Addr:          addr,
 		SafeID:        safeID(addr),
+		Backup:        backup,
 		TotalRequests: snap.TotalRequests,
 		ErrorCount:    snap.ErrorCount,
 		Avg1mStr:      fmtLatency(snap.Avg1m),
@@ -165,6 +167,7 @@ type jsonSet struct {
 type jsonProxy struct {
 	Addr          string `json:"addr"`
 	SafeID        string `json:"safe_id"`
+	Backup        bool   `json:"backup"`
 	TotalRequests int64  `json:"total_requests"`
 	ErrorCount    int64  `json:"error_count"`
 	Avg1mStr      string `json:"avg_1m_str"`
@@ -187,10 +190,11 @@ func (h *Handler) buildJSONSnapshot() jsonSnapshot {
 		js := jsonSet{Name: p.Name}
 		for _, u := range p.Upstreams {
 			s := u.Stats.Snapshot()
-			tp := makeTemplateProxy(u.Addr, s)
+			tp := makeTemplateProxy(u.Addr, u.Backup, s)
 			js.Proxies = append(js.Proxies, jsonProxy{
 				Addr:          tp.Addr,
 				SafeID:        tp.SafeID,
+				Backup:        tp.Backup,
 				TotalRequests: tp.TotalRequests,
 				ErrorCount:    tp.ErrorCount,
 				Avg1mStr:      tp.Avg1mStr,

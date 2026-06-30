@@ -26,7 +26,10 @@ const (
 type UpstreamProxy struct {
 	Addr    string
 	SetName string
-	Stats   *stats.ProxyStats
+	// Backup marks this upstream as a reserve, used only when every primary
+	// upstream in the set is down.
+	Backup bool
+	Stats  *stats.ProxyStats
 
 	status     atomic.Uint32
 	rp         *httputil.ReverseProxy
@@ -34,12 +37,13 @@ type UpstreamProxy struct {
 	warmClient *http.Client
 }
 
-func NewUpstream(setName, addr string, pool config.PoolConfig) *UpstreamProxy {
+func NewUpstream(setName, addr string, backup bool, pool config.PoolConfig) *UpstreamProxy {
 	target := &url.URL{Scheme: "https", Host: addr}
 
 	u := &UpstreamProxy{
 		Addr:    addr,
 		SetName: setName,
+		Backup:  backup,
 		Stats:   stats.New(),
 		target:  target,
 	}

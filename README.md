@@ -16,6 +16,8 @@ Client → POST /openrouter/v1/chat/completions → bestproxy
 
 **Health monitoring** runs a TCP ping per upstream on a configurable interval. Consecutive failures trip a circuit breaker (marks upstream as down); consecutive successes restore it.
 
+**Backup upstreams** — each set can declare a `backup:` list of reserve upstreams. They are health-checked like everything else but receive traffic *only when every primary upstream in the set is down*. As soon as any primary recovers, traffic returns to the primaries. Backups are **not** pre-warmed at startup, so the first request after a failover pays a TLS handshake.
+
 **Connection pool** pre-warms TLS connections at startup and keeps idle connections alive (`MaxIdleConnsPerHost`). All data is in memory — no database or Redis required.
 
 ## Quick start
@@ -56,6 +58,9 @@ sets:
       - host: openrouter-fi-02.msndr.net
       - host: openrouter-de-03.msndr.net
         port: 8443                          # custom port
+    backup:                                 # used only when all proxies above are down
+      - host: openrouter-backup-01.msndr.net
+      - host: openrouter-backup-02.msndr.net
 
   - name: anthropic
     pool:
@@ -80,6 +85,7 @@ sets:
 | `sets[].pool.min` | `5` | Pre-warmed connections at startup |
 | `sets[].pool.max` | `100` | Max idle connections per upstream |
 | `sets[].proxies[].port` | `443` | Upstream port if not specified |
+| `sets[].backup` | — | Reserve upstreams (same fields as `proxies`); used only when all primaries are down, not pre-warmed |
 
 ## Docker
 

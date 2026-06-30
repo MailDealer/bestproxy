@@ -34,13 +34,20 @@ func main() {
 	pools := make([]*proxy.Pool, 0, len(cfg.Sets))
 
 	for _, setConf := range cfg.Sets {
-		upstreams := make([]*proxy.UpstreamProxy, 0, len(setConf.Proxies))
+		upstreams := make([]*proxy.UpstreamProxy, 0, len(setConf.Proxies)+len(setConf.Backup))
 		for _, pc := range setConf.Proxies {
-			u := proxy.NewUpstream(setConf.Name, pc.Addr(), setConf.Pool)
+			u := proxy.NewUpstream(setConf.Name, pc.Addr(), false, setConf.Pool)
 			upstreams = append(upstreams, u)
 			allUpstreams = append(allUpstreams, u)
 			logger.Info("registered upstream", "set", setConf.Name, "addr", pc.Addr(),
-				"pool_min", setConf.Pool.Min, "pool_max", setConf.Pool.Max)
+				"backup", false, "pool_min", setConf.Pool.Min, "pool_max", setConf.Pool.Max)
+		}
+		for _, pc := range setConf.Backup {
+			u := proxy.NewUpstream(setConf.Name, pc.Addr(), true, setConf.Pool)
+			upstreams = append(upstreams, u)
+			allUpstreams = append(allUpstreams, u)
+			logger.Info("registered upstream", "set", setConf.Name, "addr", pc.Addr(),
+				"backup", true, "pool_min", setConf.Pool.Min, "pool_max", setConf.Pool.Max)
 		}
 		pools = append(pools, proxy.NewPool(setConf.Name, upstreams))
 	}
@@ -57,6 +64,9 @@ func main() {
 		min := setConf.Pool.Min
 		for _, u := range pools[si].Upstreams {
 			u := u
+			if u.Backup {
+				continue // reserves are not pre-warmed; only health-checked
+			}
 			go func() {
 				logger.Info("warming up connections", "addr", u.Addr, "n", min)
 				u.WarmUp(ctx, min)

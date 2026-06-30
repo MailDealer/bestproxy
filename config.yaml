@@ -19,6 +19,9 @@ sets:
       - host: openrouter-fi-01.msndr.net
       - host: openrouter-fi-02.msndr.net
       - host: openrouter-de-03.msndr.net
+    backup:                                # used only when every proxy above is down
+      - host: openrouter-backup-01.msndr.net
+      - host: openrouter-backup-02.msndr.net
 
   - name: anthropic
     pool:
