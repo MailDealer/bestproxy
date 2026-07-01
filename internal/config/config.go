@@ -11,11 +11,10 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig   `yaml:"server"`
-	Health   HealthConfig   `yaml:"health"`
-	Failover FailoverConfig `yaml:"failover"`
-	TLS      TLSConfig      `yaml:"tls"`
-	Sets     []SetConfig    `yaml:"sets"`
+	Server ServerConfig `yaml:"server"`
+	Health HealthConfig `yaml:"health"`
+	TLS    TLSConfig    `yaml:"tls"`
+	Sets   []SetConfig  `yaml:"sets"`
 }
 
 type ServerConfig struct {
@@ -31,12 +30,6 @@ type HealthConfig struct {
 	Timeout           time.Duration `yaml:"timeout"`
 	FailureThreshold  int           `yaml:"failure_threshold"`
 	RecoveryThreshold int           `yaml:"recovery_threshold"`
-}
-
-// FailoverConfig controls per-request retry across upstreams in a set.
-type FailoverConfig struct {
-	MaxAttempts    int   `yaml:"max_attempts"`     // max upstreams tried per request
-	MaxBufferBytes int64 `yaml:"max_buffer_bytes"` // cap on buffered request body (for retry)
 }
 
 // TLSConfig is for the origin/proxy TLS handshakes. insecure_skip_verify is TEST ONLY.
@@ -170,12 +163,6 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Health.RecoveryThreshold == 0 {
 		cfg.Health.RecoveryThreshold = 2
-	}
-	if cfg.Failover.MaxAttempts == 0 {
-		cfg.Failover.MaxAttempts = 3
-	}
-	if cfg.Failover.MaxBufferBytes == 0 {
-		cfg.Failover.MaxBufferBytes = 10 * 1024 * 1024 // 10 MiB
 	}
 	for i := range cfg.Sets {
 		if cfg.Sets[i].Pool.Min == 0 {

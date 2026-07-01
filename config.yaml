@@ -4,10 +4,6 @@ server:
   write_timeout: 600s
   idle_timeout: 600s
 
-failover:
-  max_attempts: 3
-  max_buffer_bytes: 10485760   # 10 MiB cap on buffered request body (for retry)
-
 tls:
   insecure_skip_verify: false  # TEST ONLY — disables origin+proxy cert verification
 

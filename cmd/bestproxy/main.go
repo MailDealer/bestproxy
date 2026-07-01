@@ -54,7 +54,7 @@ func main() {
 			logger.Info("registered upstream", "set", setConf.Name, "proxy", fwdURL.Host,
 				"origin", origin.String(), "pool_min", setConf.Pool.Min, "pool_max", setConf.Pool.Max)
 		}
-		pools = append(pools, proxy.NewPool(setConf.Name, upstreams, cfg.Failover.MaxAttempts, cfg.Failover.MaxBufferBytes))
+		pools = append(pools, proxy.NewPool(setConf.Name, upstreams))
 	}
 
 	// Start health checker.

@@ -4,10 +4,6 @@ server:
   write_timeout: 600s
   idle_timeout: 600s
 
-failover:
-  max_attempts: 3
-  max_buffer_bytes: 10485760
-
 # Self-signed origin + plaintext (http) CONNECT proxies — test only.
 tls:
   insecure_skip_verify: true

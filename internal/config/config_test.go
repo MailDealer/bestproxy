@@ -36,9 +36,6 @@ func TestLoad_EnvExpandAndDefaults(t *testing.T) {
 	if cfg.Health.Mode != "connect" {
 		t.Fatalf("default health.mode want connect, got %q", cfg.Health.Mode)
 	}
-	if cfg.Failover.MaxAttempts != 3 || cfg.Failover.MaxBufferBytes != 10*1024*1024 {
-		t.Fatalf("failover defaults wrong: %+v", cfg.Failover)
-	}
 	if cfg.Sets[0].Proxies[0].Scheme != "https" {
 		t.Fatalf("default proxy scheme want https, got %q", cfg.Sets[0].Proxies[0].Scheme)
 	}

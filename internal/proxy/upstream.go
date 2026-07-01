@@ -82,9 +82,10 @@ func NewUpstream(setName string, forwardURL, origin *url.URL, pool config.PoolCo
 		ExpectContinueTimeout: 1 * time.Second,
 		// Force HTTP/1.1 to origin inside the CONNECT tunnel: one TCP conn per in-flight
 		// request avoids HTTP/2 head-of-line blocking and the shared connection-level flow
-		// window over the geo hop (same reasoning as the reverse-mode h1 switch). A dead
-		// tunneled keepalive conn surfaces as a RoundTrip error on reuse, so the failover
-		// loop retries the buffered body on another upstream — no h2 PING needed.
+		// window over the geo hop (same reasoning as the reverse-mode h1 switch). There is
+		// no per-request failover, so a stale pooled conn surfacing as a RoundTrip error on
+		// reuse returns 502 (POST bodies are streamed, not replayable); the health checker
+		// keeps dead upstreams out of selection.
 		ForceAttemptHTTP2: false,
 		TLSNextProto:      map[string]func(string, *tls.Conn) http.RoundTripper{},
 	}
