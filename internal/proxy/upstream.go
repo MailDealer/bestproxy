@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -66,10 +67,20 @@ func NewUpstream(setName, addr string, backup bool, pool config.PoolConfig) *Ups
 		},
 		MaxIdleConns:          0,
 		MaxIdleConnsPerHost:   pool.Max,
+		MaxConnsPerHost:       0,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
-		ForceAttemptHTTP2:     true,
+		// Force HTTP/1.1 to OpenRouter: with HTTP/2 all proxied traffic is
+		// multiplexed onto a single TLS connection per upstream, which under
+		// concurrency suffers TCP head-of-line blocking, a shared flow-control
+		// window and a serialized frame writer — the direct client, opening one
+		// connection per request, avoids all of that. A large keep-alive pool
+		// (MaxIdleConnsPerHost) gives each in-flight request its own TCP window
+		// with amortized TLS handshakes.
+		ForceAttemptHTTP2: false,
+		TLSClientConfig:   &tls.Config{NextProtos: []string{"http/1.1"}},
+		TLSNextProto:      map[string]func(string, *tls.Conn) http.RoundTripper{},
 	}
 
 	u.warmClient = &http.Client{Transport: transport, Timeout: 10 * time.Second}
