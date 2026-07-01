@@ -16,7 +16,6 @@ import (
 
 	"github.com/elkin/bestproxy/internal/config"
 	"github.com/elkin/bestproxy/internal/stats"
-	"golang.org/x/net/http2"
 )
 
 type Status uint32
@@ -74,20 +73,20 @@ func NewUpstream(setName string, forwardURL, origin *url.URL, pool config.PoolCo
 		// Shared for TLS-to-proxy (https proxy) and TLS-to-origin (inside tunnel);
 		// Go sets ServerName per hop, so the origin cert is verified against the real
 		// host — the end-to-end security guarantee. insecure_skip_verify is e2e-only.
-		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: tlsInsecure}, //nolint:gosec
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: tlsInsecure, NextProtos: []string{"http/1.1"}}, //nolint:gosec
 		MaxIdleConns:          0,
 		MaxIdleConnsPerHost:   pool.Max,
+		MaxConnsPerHost:       0,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
-	}
-
-	// HTTP/2 keepalive PINGs: detect dead tunneled h2 conns to Cloudflare and evict
-	// them, so the next RoundTrip errors before sending the (non-idempotent, non-
-	// retryable-by-Go) POST body — our failover loop then retries on another upstream.
-	if h2t, err := http2.ConfigureTransports(transport); err == nil && h2t != nil {
-		h2t.ReadIdleTimeout = 15 * time.Second
-		h2t.PingTimeout = 5 * time.Second
+		// Force HTTP/1.1 to origin inside the CONNECT tunnel: one TCP conn per in-flight
+		// request avoids HTTP/2 head-of-line blocking and the shared connection-level flow
+		// window over the geo hop (same reasoning as the reverse-mode h1 switch). A dead
+		// tunneled keepalive conn surfaces as a RoundTrip error on reuse, so the failover
+		// loop retries the buffered body on another upstream — no h2 PING needed.
+		ForceAttemptHTTP2: false,
+		TLSNextProto:      map[string]func(string, *tls.Conn) http.RoundTripper{},
 	}
 
 	u.rt = &trackingTransport{Transport: transport, pool: ps}
