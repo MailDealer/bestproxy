@@ -14,6 +14,7 @@ type upstream interface {
 	Status() Status
 	EWMA() float64
 	IsBackup() bool
+	HostAddr() string
 	RoundTrip(*http.Request) (*http.Response, error)
 	Origin() *url.URL
 	RecordRequest()

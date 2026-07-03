@@ -23,8 +23,18 @@ const (
 	numErrKinds
 )
 
-// errKindLabels are the short human labels shown in the dashboard tooltip.
+// errKindLabels are the short stable labels for each kind. They are part of the public
+// contract: shown in the dashboard tooltip AND sent in the X-Bestproxy-Error header and
+// JSON error body, so downstream gateways can branch on them. Do not rename lightly.
 var errKindLabels = [numErrKinds]string{"stale", "timeout", "dial", "tls", "canceled", "other"}
+
+// String returns the stable lowercase label for the kind.
+func (k ErrKind) String() string {
+	if k < 0 || k >= numErrKinds {
+		return "other"
+	}
+	return errKindLabels[k]
+}
 
 // ProxyStats holds all metrics for one upstream proxy.
 // Atomic fields must be first for 64-bit alignment on 32-bit platforms.

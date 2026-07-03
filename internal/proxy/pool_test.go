@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -48,6 +49,68 @@ func TestNoFailover_SuccessStreamsBody(t *testing.T) {
 	}
 	if a.reqs != 1 || a.oks != 1 {
 		t.Fatalf("want reqs=1 oks=1, got %d/%d", a.reqs, a.oks)
+	}
+}
+
+// A tunnel failure is marked unambiguously: X-Bestproxy-Error header (= kind) plus a
+// stable JSON body, so the gateway can tell our 502 apart from a proxied origin response.
+func TestTunnelError_MarkedResponse(t *testing.T) {
+	a := newFake("fwd-nl-11.msndr.net:443", StatusUp, 10)
+	a.rt = func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("read tcp 1.2.3.4:443: connection reset by peer")
+	}
+	p := &Pool{Name: "openrouter", sel: []upstream{a}}
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/x", strings.NewReader("y")))
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("want 502, got %d", rec.Code)
+	}
+	if got := rec.Header().Get(HeaderError); got != "stale" {
+		t.Fatalf("X-Bestproxy-Error = %q, want stale", got)
+	}
+	if got := rec.Header().Get(HeaderUpstream); got != "fwd-nl-11.msndr.net:443" {
+		t.Fatalf("X-Bestproxy-Upstream = %q", got)
+	}
+	if got := rec.Header().Get(HeaderSet); got != "openrouter" {
+		t.Fatalf("X-Bestproxy-Set = %q", got)
+	}
+
+	var body struct{ Error tunnelError }
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body is not JSON: %v (%s)", err, rec.Body.String())
+	}
+	e := body.Error
+	if e.Source != "bestproxy" || e.Code != errCodeTunnelFailed || e.Kind != "stale" {
+		t.Fatalf("unexpected error body: %+v", e)
+	}
+	if e.Message == "" || e.Detail == "" {
+		t.Fatalf("want non-empty message+detail, got %+v", e)
+	}
+}
+
+// The no-healthy-upstream case is marked too, with its own code/kind and no upstream addr.
+func TestTunnelError_NoUpstreamMarked(t *testing.T) {
+	a := newFake("a", StatusDown, 10)
+	p := &Pool{Name: "openrouter", sel: []upstream{a}}
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/x", nil))
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("want 502, got %d", rec.Code)
+	}
+	if got := rec.Header().Get(HeaderError); got != kindNoUpstream {
+		t.Fatalf("X-Bestproxy-Error = %q, want %q", got, kindNoUpstream)
+	}
+	if got := rec.Header().Get(HeaderUpstream); got != "" {
+		t.Fatalf("no_upstream must not set upstream header, got %q", got)
+	}
+	var body struct{ Error tunnelError }
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body is not JSON: %v", err)
+	}
+	if body.Error.Code != errCodeNoUpstream {
+		t.Fatalf("code = %q, want %q", body.Error.Code, errCodeNoUpstream)
 	}
 }
 

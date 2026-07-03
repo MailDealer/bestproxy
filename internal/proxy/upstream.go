@@ -112,6 +112,9 @@ func (u *UpstreamProxy) Origin() *url.URL { return u.origin }
 // primary upstream in the set is up).
 func (u *UpstreamProxy) IsBackup() bool { return u.Backup }
 
+// HostAddr is the forward-proxy host:port, surfaced in error headers/bodies for diagnostics.
+func (u *UpstreamProxy) HostAddr() string { return u.Addr }
+
 // EWMA exposes the selection metric (probe latency EWMA).
 func (u *UpstreamProxy) EWMA() float64 { return u.Stats.EWMA() }
 
