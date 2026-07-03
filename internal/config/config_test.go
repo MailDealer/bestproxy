@@ -41,6 +41,35 @@ func TestLoad_EnvExpandAndDefaults(t *testing.T) {
 	}
 }
 
+const backupBody = `
+sets:
+  - name: openrouter
+    origin: https://openrouter.ai
+    proxies:
+      - host: ${FWD_CRED}@fwd-fi-01.msndr.net
+    backup:
+      - host: ${BK_CRED}@fwd-backup-01.msndr.net
+`
+
+func TestLoad_BackupExpandAndDefaults(t *testing.T) {
+	t.Setenv("FWD_CRED", "alice:s3cr3t")
+	t.Setenv("BK_CRED", "bob:r3serv3")
+
+	cfg, err := Load(writeConfig(t, backupBody))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(cfg.Sets[0].Backup) != 1 {
+		t.Fatalf("want 1 backup, got %d", len(cfg.Sets[0].Backup))
+	}
+	if cfg.Sets[0].Backup[0].Host != "bob:r3serv3@fwd-backup-01.msndr.net" {
+		t.Fatalf("env not expanded in backup host: %q", cfg.Sets[0].Backup[0].Host)
+	}
+	if cfg.Sets[0].Backup[0].Scheme != "https" {
+		t.Fatalf("default backup scheme want https, got %q", cfg.Sets[0].Backup[0].Scheme)
+	}
+}
+
 func TestProxyURL_ParsesHostAuth(t *testing.T) {
 	cases := []struct {
 		name           string
@@ -115,6 +144,13 @@ sets:
   - name: x
     origin: https://ok.test
     proxies: [{host: ""}]
+`,
+		"empty backup host": `
+sets:
+  - name: x
+    origin: https://ok.test
+    proxies: [{host: u:p@fwd.test}]
+    backup: [{host: ""}]
 `,
 	}
 	for name, body := range cases {

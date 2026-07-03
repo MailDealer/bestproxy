@@ -47,6 +47,8 @@ type SetConfig struct {
 	Origin  string        `yaml:"origin"` // real upstream, e.g. https://openrouter.ai
 	Pool    PoolConfig    `yaml:"pool"`
 	Proxies []ProxyConfig `yaml:"proxies"`
+	// Backup proxies are used only when every proxy in Proxies is down.
+	Backup []ProxyConfig `yaml:"backup"`
 }
 
 // ProxyConfig is one forward proxy. Auth is embedded per-proxy in Host using the
@@ -126,6 +128,9 @@ func expandEnv(cfg *Config) {
 		for j := range cfg.Sets[i].Proxies {
 			cfg.Sets[i].Proxies[j].Host = resolveEnv(cfg.Sets[i].Proxies[j].Host)
 		}
+		for j := range cfg.Sets[i].Backup {
+			cfg.Sets[i].Backup[j].Host = resolveEnv(cfg.Sets[i].Backup[j].Host)
+		}
 	}
 }
 
@@ -176,6 +181,11 @@ func applyDefaults(cfg *Config) {
 				cfg.Sets[i].Proxies[j].Scheme = "https"
 			}
 		}
+		for j := range cfg.Sets[i].Backup {
+			if cfg.Sets[i].Backup[j].Scheme == "" {
+				cfg.Sets[i].Backup[j].Scheme = "https"
+			}
+		}
 	}
 }
 
@@ -210,6 +220,15 @@ func validate(cfg *Config) error {
 			}
 			if _, err := p.ProxyURL(); err != nil {
 				return fmt.Errorf("set %q: %w", s.Name, err)
+			}
+		}
+		// Backups are optional; when present they are validated like primaries.
+		for _, p := range s.Backup {
+			if p.Scheme != "http" && p.Scheme != "https" {
+				return fmt.Errorf("set %q backup proxy %q: scheme must be \"http\" or \"https\", got %q", s.Name, p.Host, p.Scheme)
+			}
+			if _, err := p.ProxyURL(); err != nil {
+				return fmt.Errorf("set %q backup: %w", s.Name, err)
 			}
 		}
 	}

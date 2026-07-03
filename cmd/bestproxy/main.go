@@ -40,19 +40,31 @@ func main() {
 			logger.Error("parse origin", "set", setConf.Name, "origin", setConf.Origin, "err", err)
 			os.Exit(1)
 		}
-		upstreams := make([]*proxy.UpstreamProxy, 0, len(setConf.Proxies))
+		upstreams := make([]*proxy.UpstreamProxy, 0, len(setConf.Proxies)+len(setConf.Backup))
 		for _, pc := range setConf.Proxies {
 			fwdURL, err := pc.ProxyURL() // validated in config.Load
 			if err != nil {
 				logger.Error("parse proxy", "set", setConf.Name, "host", pc.Host, "err", err)
 				os.Exit(1)
 			}
-			u := proxy.NewUpstream(setConf.Name, fwdURL, origin, setConf.Pool, cfg.TLS.InsecureSkipVerify)
+			u := proxy.NewUpstream(setConf.Name, fwdURL, origin, false, setConf.Pool, cfg.TLS.InsecureSkipVerify)
 			upstreams = append(upstreams, u)
 			allUpstreams = append(allUpstreams, u)
 			// fwdURL.Host only — never log userinfo (password).
 			logger.Info("registered upstream", "set", setConf.Name, "proxy", fwdURL.Host,
-				"origin", origin.String(), "pool_min", setConf.Pool.Min, "pool_max", setConf.Pool.Max)
+				"origin", origin.String(), "backup", false, "pool_min", setConf.Pool.Min, "pool_max", setConf.Pool.Max)
+		}
+		for _, pc := range setConf.Backup {
+			fwdURL, err := pc.ProxyURL() // validated in config.Load
+			if err != nil {
+				logger.Error("parse backup proxy", "set", setConf.Name, "host", pc.Host, "err", err)
+				os.Exit(1)
+			}
+			u := proxy.NewUpstream(setConf.Name, fwdURL, origin, true, setConf.Pool, cfg.TLS.InsecureSkipVerify)
+			upstreams = append(upstreams, u)
+			allUpstreams = append(allUpstreams, u)
+			logger.Info("registered upstream", "set", setConf.Name, "proxy", fwdURL.Host,
+				"origin", origin.String(), "backup", true, "pool_min", setConf.Pool.Min, "pool_max", setConf.Pool.Max)
 		}
 		pools = append(pools, proxy.NewPool(setConf.Name, upstreams))
 	}
@@ -69,6 +81,9 @@ func main() {
 		min := setConf.Pool.Min
 		for _, u := range pools[si].Upstreams {
 			u := u
+			if u.Backup {
+				continue // reserves are not pre-warmed; only health-checked
+			}
 			go func() {
 				logger.Info("warming up connections", "addr", u.Addr, "n", min)
 				u.WarmUp(ctx, min)

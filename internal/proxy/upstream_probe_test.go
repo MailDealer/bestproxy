@@ -61,7 +61,7 @@ func mustUpstream(t *testing.T, proxyAddr, user, pass string) *UpstreamProxy {
 		fwd.User = url.UserPassword(user, pass)
 	}
 	origin, _ := url.Parse("https://origin.test:443")
-	return NewUpstream("test", fwd, origin, config.PoolConfig{Max: 10}, true)
+	return NewUpstream("test", fwd, origin, false, config.PoolConfig{Max: 10}, true)
 }
 
 func TestConnectProbe_Success(t *testing.T) {

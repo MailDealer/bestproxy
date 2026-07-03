@@ -11,6 +11,7 @@ import (
 type upstream interface {
 	Status() Status
 	EWMA() float64
+	IsBackup() bool
 	RoundTrip(*http.Request) (*http.Response, error)
 	Origin() *url.URL
 	RecordRequest()
@@ -19,16 +20,28 @@ type upstream interface {
 }
 
 // Pick selects the best upstream using Power-of-Two-Choices with EWMA latency.
-// Returns nil if all upstreams are down.
+// Primary upstreams are always preferred; backup upstreams are used only when
+// no primary upstream is up. Returns nil if all upstreams (primary and backup)
+// are down.
 func Pick(upstreams []upstream) upstream {
 	return PickExcluding(upstreams, nil)
 }
 
 // PickExcluding is Pick but skips already-tried upstreams (for per-request failover).
+// It keeps the two-tier preference: primaries first, backups only as a fallback.
 func PickExcluding(upstreams []upstream, exclude map[upstream]bool) upstream {
+	if u := pickTier(upstreams, false, exclude); u != nil {
+		return u
+	}
+	return pickTier(upstreams, true, exclude)
+}
+
+// pickTier runs P2C+EWMA selection over the healthy, non-excluded upstreams of a
+// single tier (primary when backup is false, reserve when backup is true).
+func pickTier(upstreams []upstream, backup bool, exclude map[upstream]bool) upstream {
 	candidates := make([]upstream, 0, len(upstreams))
 	for _, u := range upstreams {
-		if u.Status() == StatusUp && !exclude[u] {
+		if u.IsBackup() == backup && u.Status() == StatusUp && !exclude[u] {
 			candidates = append(candidates, u)
 		}
 	}

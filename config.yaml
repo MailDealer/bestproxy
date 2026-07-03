@@ -28,6 +28,9 @@ sets:
       - host: ${FI02_CRED}@fwd-fi-02.msndr.net
       - host: ${DE03_CRED}@fwd-de-03.msndr.net
       - host: ${NL04_CRED}@fwd-nl-04.msndr.net
+    backup:                                      # used only when every proxy above is down
+      - host: ${BK01_CRED}@fwd-backup-01.msndr.net
+      - host: ${BK02_CRED}@fwd-backup-02.msndr.net
 
   - name: openai
     origin: https://api.openai.com

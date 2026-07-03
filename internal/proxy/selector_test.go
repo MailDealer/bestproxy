@@ -50,3 +50,38 @@ func TestPick_SingleCandidate(t *testing.T) {
 		t.Fatalf("want only, got %v", got)
 	}
 }
+
+func newBackupFake(id string, status Status, ewma float64) *fakeUpstream {
+	f := newFake(id, status, ewma)
+	f.backup = true
+	return f
+}
+
+func TestPick_PrefersPrimaryOverBackup(t *testing.T) {
+	primary := newFake("primary", StatusUp, 500)      // slow primary
+	backup := newBackupFake("backup", StatusUp, 1)    // fast backup, must be ignored
+	// A healthy primary always wins, even when a backup has a far lower EWMA.
+	for i := 0; i < 50; i++ {
+		if got := Pick([]upstream{primary, backup}); got != primary {
+			t.Fatalf("want primary while it is up, got %v", got)
+		}
+	}
+}
+
+func TestPick_FallsBackToBackupWhenAllPrimariesDown(t *testing.T) {
+	primary := newFake("primary", StatusDown, 1)
+	backup := newBackupFake("backup", StatusUp, 500)
+	for i := 0; i < 50; i++ {
+		if got := Pick([]upstream{primary, backup}); got != backup {
+			t.Fatalf("want backup when all primaries are down, got %v", got)
+		}
+	}
+}
+
+func TestPick_NilWhenPrimaryAndBackupDown(t *testing.T) {
+	primary := newFake("primary", StatusDown, 1)
+	backup := newBackupFake("backup", StatusDown, 1)
+	if got := Pick([]upstream{primary, backup}); got != nil {
+		t.Fatalf("want nil when every tier is down, got %v", got)
+	}
+}

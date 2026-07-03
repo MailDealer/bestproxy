@@ -31,7 +31,10 @@ const (
 type UpstreamProxy struct {
 	Addr    string // forward proxy host:port (for dashboard/health)
 	SetName string
-	Stats   *stats.ProxyStats
+	// Backup marks this upstream as a reserve, used only when every primary
+	// upstream in the set is down.
+	Backup bool
+	Stats  *stats.ProxyStats
 
 	status     atomic.Uint32
 	origin     *url.URL // real upstream, e.g. https://openrouter.ai
@@ -40,10 +43,11 @@ type UpstreamProxy struct {
 	warmClient *http.Client
 }
 
-func NewUpstream(setName string, forwardURL, origin *url.URL, pool config.PoolConfig, tlsInsecure bool) *UpstreamProxy {
+func NewUpstream(setName string, forwardURL, origin *url.URL, backup bool, pool config.PoolConfig, tlsInsecure bool) *UpstreamProxy {
 	u := &UpstreamProxy{
 		Addr:       forwardURL.Host,
 		SetName:    setName,
+		Backup:     backup,
 		Stats:      stats.New(),
 		origin:     origin,
 		forwardURL: forwardURL,
@@ -103,6 +107,10 @@ func (u *UpstreamProxy) RoundTrip(req *http.Request) (*http.Response, error) {
 
 // Origin is the real upstream URL this forward proxy tunnels to.
 func (u *UpstreamProxy) Origin() *url.URL { return u.origin }
+
+// IsBackup reports whether this upstream is a reserve (selected only when no
+// primary upstream in the set is up).
+func (u *UpstreamProxy) IsBackup() bool { return u.Backup }
 
 // EWMA exposes the selection metric (probe latency EWMA).
 func (u *UpstreamProxy) EWMA() float64 { return u.Stats.EWMA() }

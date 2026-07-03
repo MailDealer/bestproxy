@@ -12,6 +12,7 @@ type fakeUpstream struct {
 	id      string
 	status  Status
 	ewma    float64
+	backup  bool
 	origin  *url.URL
 	rt      func(*http.Request) (*http.Response, error)
 	reqs    int
@@ -27,6 +28,7 @@ func newFake(id string, status Status, ewma float64) *fakeUpstream {
 
 func (f *fakeUpstream) Status() Status      { return f.status }
 func (f *fakeUpstream) EWMA() float64       { return f.ewma }
+func (f *fakeUpstream) IsBackup() bool      { return f.backup }
 func (f *fakeUpstream) Origin() *url.URL    { return f.origin }
 func (f *fakeUpstream) RecordRequest()      { f.reqs++ }
 func (f *fakeUpstream) RecordSuccess(int64) { f.oks++ }
