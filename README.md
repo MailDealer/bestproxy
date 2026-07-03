@@ -84,6 +84,7 @@ sets:
 | `health.recovery_threshold` | `2` | Successes to restore upstream |
 | `sets[].pool.min` | `5` | Pre-warmed connections at startup |
 | `sets[].pool.max` | `100` | Max idle connections per upstream |
+| `sets[].pool.idle_conn_timeout` | `25s` | How long an idle keepalive conn is kept before we close it. Keep below the origin's idle timeout to avoid `stale` errors (reusing a conn the peer already closed) |
 | `sets[].proxies[].port` | `443` | Upstream port if not specified |
 | `sets[].backup` | — | Reserve proxies (same fields as `proxies`); used only when all primaries are down, not pre-warmed |
 
@@ -145,6 +146,24 @@ anthropic-us-01         230       0   45ms   48ms    50ms       0     9     10  
 - **Total** — live connections (active + idle)
 - **Created** — total TLS handshakes since start
 
+**Errors column** — count of requests where the tunnel to the upstream failed before a
+response came back. Only transport failures are counted: if the request reaches the
+origin and it returns an HTTP status — even `4xx`/`5xx` (e.g. `429 Too Many Requests`) —
+that is a **success** here, because the tunnel worked. There is no per-request retry, so
+each counted error surfaced to the client as a `502 Bad Gateway`.
+
+Hover the errors number to see the breakdown by type (also exposed as `err_tooltip` in
+the JSON API):
+
+| Type | Meaning | Typical cause / fix |
+|---|---|---|
+| `stale` | A reused idle keepalive connection was closed by the peer (origin/CF) before we wrote to it — surfaces as EOF / connection reset / broken pipe / "server closed idle connection". | The most common class. Keep `pool.idle_conn_timeout` **below** the origin's idle timeout so we re-dial fresh instead of reusing a dead conn. |
+| `timeout` | A dial, TLS-handshake or response deadline was exceeded (`context deadline exceeded` or any `net.Error` reporting `Timeout()`). | Slow/overloaded forward-proxy VPS or a slow geo hop. Check upstream latency columns and VPS health. |
+| `dial` | Could not establish the tunnel to the forward proxy at all — connection refused, host not resolvable, network unreachable, `proxyconnect` failure. | Forward-proxy VPS down or misconfigured, DNS/firewall issue. The health checker should already mark it `down`. |
+| `tls` | TLS handshake failed — to the forward proxy, or (inside the CONNECT tunnel) to the real origin: cert verification, `x509:` or `tls:` errors. | Cert/SNI/clock issues, or an intercepting middlebox. Verify certs and `tls.insecure_skip_verify` (must be `false` in prod). |
+| `canceled` | The client cancelled the request (its context was cancelled) before a response arrived. | Caller-side — client disconnected or hit its own timeout. Not an upstream fault; no retry is possible. |
+| `other` | Any transport error not matched above. | Inspect proxy logs; if a class recurs, add it to `classifyErr`. |
+
 ### JSON API
 
 `GET /dashboard/json` returns the full snapshot as JSON:
@@ -164,6 +183,7 @@ curl http://localhost:8888/dashboard/json
           "addr": "openrouter-fi-01.msndr.net:443",
           "total_requests": 1420,
           "error_count": 2,
+          "err_tooltip": "stale 1 · timeout 1",
           "avg_1m_str": "32ms",
           "avg_5m_str": "35ms",
           "avg_1h_str": "40ms",

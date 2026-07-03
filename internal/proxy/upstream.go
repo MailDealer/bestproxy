@@ -81,7 +81,7 @@ func NewUpstream(setName string, forwardURL, origin *url.URL, backup bool, pool 
 		MaxIdleConns:          0,
 		MaxIdleConnsPerHost:   pool.Max,
 		MaxConnsPerHost:       0,
-		IdleConnTimeout:       90 * time.Second,
+		IdleConnTimeout:       pool.IdleConnTimeout,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		// Force HTTP/1.1 to origin inside the CONNECT tunnel: one TCP conn per in-flight
@@ -116,9 +116,9 @@ func (u *UpstreamProxy) IsBackup() bool { return u.Backup }
 func (u *UpstreamProxy) EWMA() float64 { return u.Stats.EWMA() }
 
 // Record* delegate to Stats so *UpstreamProxy satisfies the upstream interface.
-func (u *UpstreamProxy) RecordRequest()        { u.Stats.RecordRequest() }
-func (u *UpstreamProxy) RecordSuccess(n int64) { u.Stats.RecordSuccess(n) }
-func (u *UpstreamProxy) RecordError()          { u.Stats.RecordError() }
+func (u *UpstreamProxy) RecordRequest()              { u.Stats.RecordRequest() }
+func (u *UpstreamProxy) RecordSuccess(n int64)       { u.Stats.RecordSuccess(n) }
+func (u *UpstreamProxy) RecordError(k stats.ErrKind) { u.Stats.RecordError(k) }
 
 // trackingTransport counts in-flight requests around the real transport.
 type trackingTransport struct {

@@ -23,6 +23,7 @@ sets:
     pool:
       min: 20
       max: 100
+      idle_conn_timeout: 25s   # keep below origin's idle timeout to avoid stale-conn 502s (default 25s)
     proxies:
       - host: ${FI01_CRED}@fwd-fi-01.msndr.net   # ${FI01_CRED} = "user:pass"
       - host: ${FI02_CRED}@fwd-fi-02.msndr.net

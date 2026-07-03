@@ -40,6 +40,11 @@ type TLSConfig struct {
 type PoolConfig struct {
 	Min int `yaml:"min"` // connections to pre-warm per upstream at startup
 	Max int `yaml:"max"` // MaxIdleConnsPerHost — cap on idle connections kept alive
+	// IdleConnTimeout is how long an idle keepalive connection is kept before we close
+	// it. Keep it BELOW the origin's idle timeout: if the peer (origin/CF) closes the
+	// idle conn first, reusing it surfaces as a RoundTrip error → 502 (stale-conn class).
+	// Proactively re-dialing dodges that race. Default 25s.
+	IdleConnTimeout time.Duration `yaml:"idle_conn_timeout"`
 }
 
 type SetConfig struct {
@@ -175,6 +180,9 @@ func applyDefaults(cfg *Config) {
 		}
 		if cfg.Sets[i].Pool.Max == 0 {
 			cfg.Sets[i].Pool.Max = 100
+		}
+		if cfg.Sets[i].Pool.IdleConnTimeout == 0 {
+			cfg.Sets[i].Pool.IdleConnTimeout = 25 * time.Second
 		}
 		for j := range cfg.Sets[i].Proxies {
 			if cfg.Sets[i].Proxies[j].Scheme == "" {

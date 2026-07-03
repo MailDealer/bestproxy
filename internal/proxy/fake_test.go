@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/elkin/bestproxy/internal/stats"
 )
 
 // fakeUpstream implements the unexported `upstream` interface for selector/pool tests.
@@ -26,13 +28,13 @@ func newFake(id string, status Status, ewma float64) *fakeUpstream {
 	return &fakeUpstream{id: id, status: status, ewma: ewma, origin: o}
 }
 
-func (f *fakeUpstream) Status() Status      { return f.status }
-func (f *fakeUpstream) EWMA() float64       { return f.ewma }
-func (f *fakeUpstream) IsBackup() bool      { return f.backup }
-func (f *fakeUpstream) Origin() *url.URL    { return f.origin }
-func (f *fakeUpstream) RecordRequest()      { f.reqs++ }
-func (f *fakeUpstream) RecordSuccess(int64) { f.oks++ }
-func (f *fakeUpstream) RecordError()        { f.errs++ }
+func (f *fakeUpstream) Status() Status            { return f.status }
+func (f *fakeUpstream) EWMA() float64             { return f.ewma }
+func (f *fakeUpstream) IsBackup() bool            { return f.backup }
+func (f *fakeUpstream) Origin() *url.URL          { return f.origin }
+func (f *fakeUpstream) RecordRequest()            { f.reqs++ }
+func (f *fakeUpstream) RecordSuccess(int64)       { f.oks++ }
+func (f *fakeUpstream) RecordError(stats.ErrKind) { f.errs++ }
 
 func (f *fakeUpstream) RoundTrip(r *http.Request) (*http.Response, error) {
 	if r.Body != nil {

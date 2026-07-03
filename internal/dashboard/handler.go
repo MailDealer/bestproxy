@@ -17,8 +17,8 @@ import (
 var templateFS embed.FS
 
 type Handler struct {
-	pools    []*proxy.Pool
-	tmpl     *template.Template
+	pools []*proxy.Pool
+	tmpl  *template.Template
 }
 
 func New(pools []*proxy.Pool) (*Handler, error) {
@@ -95,6 +95,7 @@ type templateProxy struct {
 	Backup        bool
 	TotalRequests int64
 	ErrorCount    int64
+	ErrTooltip    string
 	Avg1mStr      string
 	Avg5mStr      string
 	Avg1hStr      string
@@ -104,10 +105,10 @@ type templateProxy struct {
 	StatusClass   string
 	StatusText    string
 	// connection pool
-	PoolInFlight  int64
-	PoolIdle      int64
-	PoolSize      int64
-	PoolCreated   int64
+	PoolInFlight int64
+	PoolIdle     int64
+	PoolSize     int64
+	PoolCreated  int64
 }
 
 func (h *Handler) buildTemplateData() templateData {
@@ -137,6 +138,7 @@ func makeTemplateProxy(addr string, backup bool, snap stats.Snapshot) templatePr
 		Backup:        backup,
 		TotalRequests: snap.TotalRequests,
 		ErrorCount:    snap.ErrorCount,
+		ErrTooltip:    errTooltip(snap),
 		Avg1mStr:      fmtLatency(snap.Avg1m),
 		Avg5mStr:      fmtLatency(snap.Avg5m),
 		Avg1hStr:      fmtLatency(snap.Avg1h),
@@ -155,8 +157,8 @@ func makeTemplateProxy(addr string, backup bool, snap stats.Snapshot) templatePr
 // --- SSE JSON types ---
 
 type jsonSnapshot struct {
-	GeneratedAt time.Time    `json:"generated_at"`
-	Sets        []jsonSet    `json:"sets"`
+	GeneratedAt time.Time `json:"generated_at"`
+	Sets        []jsonSet `json:"sets"`
 }
 
 type jsonSet struct {
@@ -165,23 +167,25 @@ type jsonSet struct {
 }
 
 type jsonProxy struct {
-	Addr          string `json:"addr"`
-	SafeID        string `json:"safe_id"`
-	Backup        bool   `json:"backup"`
-	TotalRequests int64  `json:"total_requests"`
-	ErrorCount    int64  `json:"error_count"`
-	Avg1mStr      string `json:"avg_1m_str"`
-	Avg5mStr      string `json:"avg_5m_str"`
-	Avg1hStr      string `json:"avg_1h_str"`
-	Avg1mClass    string `json:"avg_1m_class"`
-	Avg5mClass    string `json:"avg_5m_class"`
-	Avg1hClass    string `json:"avg_1h_class"`
-	StatusClass   string `json:"status_class"`
-	StatusText    string `json:"status_text"`
-	PoolInFlight  int64  `json:"pool_in_flight"`
-	PoolIdle      int64  `json:"pool_idle"`
-	PoolSize      int64  `json:"pool_size"`
-	PoolCreated   int64  `json:"pool_created"`
+	Addr          string           `json:"addr"`
+	SafeID        string           `json:"safe_id"`
+	Backup        bool             `json:"backup"`
+	TotalRequests int64            `json:"total_requests"`
+	ErrorCount    int64            `json:"error_count"`
+	ErrTooltip    string           `json:"err_tooltip"`
+	ErrByKind     map[string]int64 `json:"err_by_kind"`
+	Avg1mStr      string           `json:"avg_1m_str"`
+	Avg5mStr      string           `json:"avg_5m_str"`
+	Avg1hStr      string           `json:"avg_1h_str"`
+	Avg1mClass    string           `json:"avg_1m_class"`
+	Avg5mClass    string           `json:"avg_5m_class"`
+	Avg1hClass    string           `json:"avg_1h_class"`
+	StatusClass   string           `json:"status_class"`
+	StatusText    string           `json:"status_text"`
+	PoolInFlight  int64            `json:"pool_in_flight"`
+	PoolIdle      int64            `json:"pool_idle"`
+	PoolSize      int64            `json:"pool_size"`
+	PoolCreated   int64            `json:"pool_created"`
 }
 
 func (h *Handler) buildJSONSnapshot() jsonSnapshot {
@@ -197,6 +201,8 @@ func (h *Handler) buildJSONSnapshot() jsonSnapshot {
 				Backup:        tp.Backup,
 				TotalRequests: tp.TotalRequests,
 				ErrorCount:    tp.ErrorCount,
+				ErrTooltip:    tp.ErrTooltip,
+				ErrByKind:     errByKindMap(s),
 				Avg1mStr:      tp.Avg1mStr,
 				Avg5mStr:      tp.Avg5mStr,
 				Avg1hStr:      tp.Avg1hStr,
@@ -214,6 +220,35 @@ func (h *Handler) buildJSONSnapshot() jsonSnapshot {
 		snap.Sets = append(snap.Sets, js)
 	}
 	return snap
+}
+
+// errTooltip renders the per-kind error breakdown as a compact hover string,
+// e.g. "stale 210 · timeout 90 · dial 40". Empty breakdown → "no errors".
+func errTooltip(snap stats.Snapshot) string {
+	parts := snap.ErrBreakdown()
+	if len(parts) == 0 {
+		return "no errors"
+	}
+	segs := make([]string, len(parts))
+	for i, p := range parts {
+		segs[i] = fmt.Sprintf("%s %d", p.Label, p.Count)
+	}
+	return strings.Join(segs, " · ")
+}
+
+// errByKindMap returns the non-zero error buckets as a label→count map for JSON
+// consumers (e.g. the routerai admin aggregates these across upstreams). Nil when
+// there are no errors, so it serializes as null and callers can treat it as empty.
+func errByKindMap(snap stats.Snapshot) map[string]int64 {
+	parts := snap.ErrBreakdown()
+	if len(parts) == 0 {
+		return nil
+	}
+	m := make(map[string]int64, len(parts))
+	for _, p := range parts {
+		m[p.Label] = p.Count
+	}
+	return m
 }
 
 func fmtLatency(d time.Duration) string {

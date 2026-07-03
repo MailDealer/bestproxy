@@ -21,6 +21,7 @@ tr:hover td{background:#131820}
 .badge{display:inline-block;margin-left:8px;padding:1px 6px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#fbbf24;background:#78350f33;border:1px solid #92400e;border-radius:4px;vertical-align:middle}
 .num{text-align:right;color:#94a3b8}
 th.num{text-align:right}
+td.num[title]{cursor:help;text-decoration:underline dotted #475569;text-underline-offset:3px}
 .lat{text-align:right}
 th.lat{text-align:right}
 .status{text-align:center;width:50px}
@@ -74,7 +75,7 @@ th.pool-head{text-align:center;border-left:1px solid #1e293b}
     <tr id="row-{{.SafeID}}">
       <td class="addr">{{.Addr}}{{if .Backup}}<span class="badge">backup</span>{{end}}</td>
       <td class="num">{{.TotalRequests}}</td>
-      <td class="num">{{.ErrorCount}}</td>
+      <td class="num" title="{{.ErrTooltip}}">{{.ErrorCount}}</td>
       <td class="lat"><span class="lat-val {{.Avg1mClass}}">{{.Avg1mStr}}</span></td>
       <td class="lat"><span class="lat-val {{.Avg5mClass}}">{{.Avg5mStr}}</span></td>
       <td class="lat"><span class="lat-val {{.Avg1hClass}}">{{.Avg1hStr}}</span></td>
@@ -104,6 +105,7 @@ es.onmessage = function(e) {
       const c = row.cells;
       c[1].textContent = p.total_requests;
       c[2].textContent = p.error_count;
+      c[2].title = p.err_tooltip;
       c[3].innerHTML = '<span class="lat-val ' + p.avg_1m_class + '">' + p.avg_1m_str + '</span>';
       c[4].innerHTML = '<span class="lat-val ' + p.avg_5m_class + '">' + p.avg_5m_str + '</span>';
       c[5].innerHTML = '<span class="lat-val ' + p.avg_1h_class + '">' + p.avg_1h_str + '</span>';

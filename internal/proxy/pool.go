@@ -35,7 +35,7 @@ func (p *Pool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	u.RecordRequest()
 	resp, err := u.RoundTrip(buildOutbound(r, u.Origin()))
 	if err != nil {
-		u.RecordError()
+		u.RecordError(classifyErr(err))
 		http.Error(w, "upstream failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}

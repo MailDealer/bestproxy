@@ -4,6 +4,8 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/url"
+
+	"github.com/elkin/bestproxy/internal/stats"
 )
 
 // upstream is the behavior Pool and the selector need. *UpstreamProxy implements it;
@@ -16,7 +18,7 @@ type upstream interface {
 	Origin() *url.URL
 	RecordRequest()
 	RecordSuccess(int64)
-	RecordError()
+	RecordError(stats.ErrKind)
 }
 
 // Pick selects the best upstream using Power-of-Two-Choices with EWMA latency.
