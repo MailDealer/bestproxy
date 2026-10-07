@@ -15,6 +15,7 @@ import (
 	"github.com/elkin/bestproxy/internal/config"
 	"github.com/elkin/bestproxy/internal/dashboard"
 	"github.com/elkin/bestproxy/internal/health"
+	"github.com/elkin/bestproxy/internal/procstats"
 	"github.com/elkin/bestproxy/internal/proxy"
 )
 
@@ -76,6 +77,10 @@ func main() {
 	checker := health.New(cfg.Health, allUpstreams)
 	checker.Start(ctx)
 
+	// Process resource sampler (CPU over a ~10s window, cgroup limits) for /stats.
+	sampler := &procstats.Sampler{}
+	sampler.Start(ctx)
+
 	// Pre-warm connection pools in background — don't block startup.
 	for si, setConf := range cfg.Sets {
 		min := setConf.Pool.Min
@@ -109,6 +114,7 @@ func main() {
 		logger.Info("registered endpoint", "path", pattern, "set", p.Name)
 	}
 
+	mux.Handle("/stats", procstats.NewCollector(sampler, pools))
 	mux.HandleFunc("/dashboard/events", dash.ServeEvents)
 	mux.HandleFunc("/dashboard/json", dash.ServeJSON)
 	mux.HandleFunc("/dashboard", dash.ServeDashboard)
