@@ -3,6 +3,7 @@ package proxy
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -128,5 +129,33 @@ func TestNoFailover_NoHealthyUpstream502(t *testing.T) {
 	}
 	if a.reqs != 0 {
 		t.Fatalf("want zero attempts on down upstream, got %d", a.reqs)
+	}
+}
+
+// A "Connection: close" set on the client response before proxying (graceful drain)
+// must survive, while the upstream's hop-by-hop headers are still stripped.
+func TestCopyResponse_KeepsOwnConnectionClose(t *testing.T) {
+	rec := httptest.NewRecorder()
+	rec.Header().Set("Connection", "close")
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"Connection":   {"keep-alive, X-Hop"},
+			"X-Hop":        {"1"},
+			"Content-Type": {"text/plain"},
+		},
+		Body: io.NopCloser(strings.NewReader("ok")),
+	}
+
+	copyResponse(rec, resp)
+
+	if got := rec.Header().Values("Connection"); len(got) != 1 || got[0] != "close" {
+		t.Fatalf("Connection header = %q, want [close]", got)
+	}
+	if rec.Header().Get("X-Hop") != "" {
+		t.Fatal("upstream hop-by-hop header X-Hop leaked")
+	}
+	if rec.Header().Get("Content-Type") != "text/plain" || rec.Body.String() != "ok" {
+		t.Fatalf("end-to-end header/body lost: %v %q", rec.Header(), rec.Body.String())
 	}
 }

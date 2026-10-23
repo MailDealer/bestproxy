@@ -22,6 +22,13 @@ type ServerConfig struct {
 	ReadTimeout  time.Duration `yaml:"read_timeout"`
 	WriteTimeout time.Duration `yaml:"write_timeout"`
 	IdleTimeout  time.Duration `yaml:"idle_timeout"`
+	// ShutdownDelay: after SIGTERM keep serving (with /readyz = 503) for this long so the
+	// orchestrator removes the pod from load balancing before the listener closes.
+	ShutdownDelay time.Duration `yaml:"shutdown_delay"`
+	// ShutdownTimeout: max time to wait for in-flight requests (e.g. long streams) to
+	// finish after the listener closes. Keep terminationGracePeriodSeconds above
+	// shutdown_delay + shutdown_timeout, or the process is SIGKILLed mid-drain.
+	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
 }
 
 type HealthConfig struct {
@@ -159,6 +166,13 @@ func applyDefaults(cfg *Config) {
 	if cfg.Server.IdleTimeout == 0 {
 		cfg.Server.IdleTimeout = 90 * time.Second
 	}
+	if cfg.Server.ShutdownDelay == 0 {
+		cfg.Server.ShutdownDelay = 5 * time.Second
+	}
+	if cfg.Server.ShutdownTimeout == 0 {
+		// write_timeout bounds any accepted request, so waiting that long never cuts one.
+		cfg.Server.ShutdownTimeout = cfg.Server.WriteTimeout
+	}
 	if cfg.Health.Mode == "" {
 		cfg.Health.Mode = "connect"
 	}
@@ -198,6 +212,9 @@ func applyDefaults(cfg *Config) {
 }
 
 func validate(cfg *Config) error {
+	if cfg.Server.ShutdownDelay < 0 || cfg.Server.ShutdownTimeout < 0 {
+		return fmt.Errorf("server.shutdown_delay and server.shutdown_timeout must be >= 0")
+	}
 	if cfg.Health.Mode != "connect" && cfg.Health.Mode != "tcp" {
 		return fmt.Errorf("health.mode must be \"connect\" or \"tcp\", got %q", cfg.Health.Mode)
 	}

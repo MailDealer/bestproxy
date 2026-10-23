@@ -3,6 +3,8 @@ server:
   read_timeout: 600s
   write_timeout: 600s
   idle_timeout: 600s
+  shutdown_delay: 5s           # after SIGTERM: /readyz=503 but still serving (LB deregistration)
+  shutdown_timeout: 600s       # then wait up to this long for in-flight requests (default = write_timeout)
 
 tls:
   insecure_skip_verify: false  # TEST ONLY — disables origin+proxy cert verification

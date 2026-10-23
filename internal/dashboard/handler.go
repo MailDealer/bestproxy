@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/elkin/bestproxy/internal/proxy"
@@ -19,6 +20,9 @@ var templateFS embed.FS
 type Handler struct {
 	pools []*proxy.Pool
 	tmpl  *template.Template
+
+	done      chan struct{} // closed by Close: ends SSE streams on shutdown
+	closeOnce sync.Once
 }
 
 func New(pools []*proxy.Pool) (*Handler, error) {
@@ -26,7 +30,7 @@ func New(pools []*proxy.Pool) (*Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Handler{pools: pools, tmpl: tmpl}, nil
+	return &Handler{pools: pools, tmpl: tmpl, done: make(chan struct{})}, nil
 }
 
 func (h *Handler) ServeJSON(w http.ResponseWriter, r *http.Request) {
@@ -65,6 +69,8 @@ func (h *Handler) ServeEvents(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-r.Context().Done():
+			return
+		case <-h.done:
 			return
 		case <-ticker.C:
 			snap := h.buildJSONSnapshot()
@@ -277,4 +283,10 @@ func latencyClass(d time.Duration) string {
 func safeID(addr string) string {
 	r := strings.NewReplacer(".", "-", ":", "-")
 	return r.Replace(addr)
+}
+
+// Close ends all open SSE streams. http.Server.Shutdown does not cancel active
+// requests, so without this an open dashboard tab would hold the drain until timeout.
+func (h *Handler) Close() {
+	h.closeOnce.Do(func() { close(h.done) })
 }

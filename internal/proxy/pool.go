@@ -136,13 +136,15 @@ func buildOutbound(r *http.Request, origin *url.URL) *http.Request {
 func copyResponse(w http.ResponseWriter, resp *http.Response) {
 	defer resp.Body.Close()
 
+	// Strip hop-by-hop from the upstream headers, not from w.Header(): the latter may
+	// already carry our own "Connection: close" (set while draining) that must survive.
+	removeHopByHop(resp.Header)
 	dst := w.Header()
 	for k, vv := range resp.Header {
 		for _, v := range vv {
 			dst.Add(k, v)
 		}
 	}
-	removeHopByHop(dst)
 	w.WriteHeader(resp.StatusCode)
 
 	flusher, _ := w.(http.Flusher)

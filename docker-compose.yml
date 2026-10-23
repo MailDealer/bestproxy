@@ -7,3 +7,5 @@ services:
     volumes:
       - ./config.yaml:/config.yaml:ro
     restart: unless-stopped
+    # > server.shutdown_delay + server.shutdown_timeout, else docker SIGKILLs mid-drain
+    stop_grace_period: 11m

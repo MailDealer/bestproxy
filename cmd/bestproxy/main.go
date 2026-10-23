@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -114,6 +115,20 @@ func main() {
 		logger.Info("registered endpoint", "path", pattern, "set", p.Name)
 	}
 
+	// Liveness vs readiness: during drain the process is alive (/healthz 200) but must
+	// leave load balancing (/readyz 503) while it finishes in-flight requests.
+	var draining atomic.Bool
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if draining.Load() {
+			http.Error(w, "draining", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
 	mux.Handle("/stats", procstats.NewCollector(sampler, pools))
 	mux.HandleFunc("/dashboard/events", dash.ServeEvents)
 	mux.HandleFunc("/dashboard/json", dash.ServeJSON)
@@ -128,26 +143,52 @@ func main() {
 
 	srv := &http.Server{
 		Addr:         cfg.Server.Addr,
-		Handler:      mux,
+		Handler:      closeWhenDraining(&draining, mux),
 		ReadTimeout:  cfg.Server.ReadTimeout,
 		WriteTimeout: cfg.Server.WriteTimeout,
 		IdleTimeout:  cfg.Server.IdleTimeout,
 	}
 
-	// Graceful shutdown on SIGTERM/SIGINT.
-	quit := make(chan os.Signal, 1)
+	// Shutdown does not cancel active requests; end dashboard SSE streams explicitly.
+	srv.RegisterOnShutdown(dash.Close)
+
+	// Graceful shutdown on SIGTERM/SIGINT:
+	//  1. mark not-ready and keep serving for shutdown_delay, so the pod leaves the
+	//     Service endpoints before we stop accepting connections;
+	//  2. close the listener and wait up to shutdown_timeout for in-flight requests;
+	//  3. only then stop background work (health checks keep running during drain).
+	// A second signal aborts the drain immediately.
+	quit := make(chan os.Signal, 2)
 	signal.Notify(quit, syscall.SIGTERM, syscall.SIGINT)
+	shutdownDone := make(chan struct{})
+	exitCode := 0 // set before shutdownDone closes; non-zero if the drain timed out
 
 	go func() {
-		<-quit
-		logger.Info("shutting down")
-		cancel() // stop health checkers
+		defer close(shutdownDone)
+		sig := <-quit
+		draining.Store(true)
+		logger.Info("draining: readiness off, still serving",
+			"signal", sig.String(), "delay", cfg.Server.ShutdownDelay)
+		go func() {
+			sig := <-quit
+			logger.Error("second signal, exiting without waiting for in-flight requests", "signal", sig.String())
+			os.Exit(1)
+		}()
 
-		shutCtx, shutCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		time.Sleep(cfg.Server.ShutdownDelay)
+
+		logger.Info("shutting down: waiting for in-flight requests", "timeout", cfg.Server.ShutdownTimeout)
+		start := time.Now()
+		shutCtx, shutCancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
 		defer shutCancel()
 		if err := srv.Shutdown(shutCtx); err != nil {
-			logger.Error("shutdown error", "err", err)
+			logger.Error("shutdown timed out, closing remaining connections", "err", err)
+			srv.Close()
+			exitCode = 1
+		} else {
+			logger.Info("all requests finished", "drain", time.Since(start).Round(time.Millisecond))
 		}
+		cancel() // stop health checkers, sampler, warm-up
 	}()
 
 	logger.Info("listening", "addr", cfg.Server.Addr)
@@ -155,4 +196,23 @@ func main() {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)
 	}
+	// ListenAndServe returns as soon as Shutdown starts; wait for the drain to finish,
+	// otherwise exiting main would kill in-flight requests.
+	<-shutdownDone
+	logger.Info("stopped", "exit_code", exitCode)
+	os.Exit(exitCode)
+}
+
+// closeWhenDraining answers with "Connection: close" once draining starts. Removing the
+// pod from Endpoints only affects NEW connections: clients (the gateway's keep-alive
+// pool) keep sending requests over existing ones. Closing them per-response during
+// shutdown_delay makes clients re-dial to other pods; otherwise Shutdown would close
+// idle conns while a client is writing a non-retryable POST into them (EOF/reset).
+func closeWhenDraining(draining *atomic.Bool, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if draining.Load() {
+			w.Header().Set("Connection", "close")
+		}
+		next.ServeHTTP(w, r)
+	})
 }

@@ -41,6 +41,8 @@ server:
   read_timeout: 30s
   write_timeout: 30s
   idle_timeout: 90s
+  shutdown_delay: 5s
+  shutdown_timeout: 30s     # default: = write_timeout
 
 health:
   interval: 10s          # how often to TCP-ping each upstream
@@ -78,6 +80,8 @@ sets:
 | `server.read_timeout` | `30s` | HTTP read timeout |
 | `server.write_timeout` | `30s` | HTTP write timeout |
 | `server.idle_timeout` | `90s` | Keep-alive idle timeout |
+| `server.shutdown_delay` | `5s` | After SIGTERM keep serving with `/readyz` = 503 so the load balancer stops sending traffic |
+| `server.shutdown_timeout` | `write_timeout` | Max wait for in-flight requests after the listener closes; keep ≥ `write_timeout` to never cut streams |
 | `health.interval` | `10s` | Health check interval per upstream |
 | `health.timeout` | `5s` | Health check TCP dial timeout |
 | `health.failure_threshold` | `3` | Failures to mark upstream down |
@@ -120,6 +124,18 @@ services:
 | `/dashboard` | Web dashboard with live stats |
 | `/dashboard/json` | Dashboard data as JSON (single request) |
 | `/dashboard/events` | Server-Sent Events stream (updates every 2s) |
+| `/healthz` | Liveness — always `200` while the process runs |
+| `/readyz` | Readiness — `200`, or `503` once shutdown has started |
+
+## Graceful shutdown
+
+On `SIGTERM`/`SIGINT` in-flight requests (including long streams) are never cut:
+
+1. `/readyz` starts returning `503`; for `server.shutdown_delay` the server keeps serving but answers every response with `Connection: close`, so keep-alive clients move to other instances while Kubernetes/the LB drops this one from rotation.
+2. The listener closes, idle keep-alive connections are closed, and the process waits up to `server.shutdown_timeout` for active requests to finish (open dashboard SSE streams are closed right away).
+3. Health checks keep running during the drain; the process exits `0` once everything has finished (`1` if `shutdown_timeout` expired and remaining connections were cut).
+
+A second signal aborts the drain immediately. The orchestrator must allow enough time: in Kubernetes `terminationGracePeriodSeconds > shutdown_delay + shutdown_timeout`, use `/readyz` for the readiness probe and `/healthz` for liveness; in docker compose set `stop_grace_period` likewise.
 
 ## Dashboard
 

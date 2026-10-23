@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func writeConfig(t *testing.T, body string) string {
@@ -159,5 +160,29 @@ sets:
 				t.Fatalf("expected validation error for %q", name)
 			}
 		})
+	}
+}
+
+func TestLoad_ShutdownDefaultsAndOverride(t *testing.T) {
+	t.Setenv("FWD_CRED", "alice:s3cr3t")
+
+	cfg, err := Load(writeConfig(t, validBody))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Server.ShutdownDelay != 5*time.Second || cfg.Server.ShutdownTimeout != 30*time.Second {
+		t.Fatalf("shutdown defaults: delay=%v timeout=%v", cfg.Server.ShutdownDelay, cfg.Server.ShutdownTimeout)
+	}
+
+	cfg, err = Load(writeConfig(t, "server:\n  shutdown_delay: 2s\n  shutdown_timeout: 30m\n"+validBody))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Server.ShutdownDelay != 2*time.Second || cfg.Server.ShutdownTimeout != 30*time.Minute {
+		t.Fatalf("shutdown override: delay=%v timeout=%v", cfg.Server.ShutdownDelay, cfg.Server.ShutdownTimeout)
+	}
+
+	if _, err := Load(writeConfig(t, "server:\n  shutdown_timeout: -1s\n"+validBody)); err == nil {
+		t.Fatal("negative shutdown_timeout must be rejected")
 	}
 }
